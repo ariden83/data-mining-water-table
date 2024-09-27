@@ -5,6 +5,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelEncoder
 import itertools
+import matplotlib.pyplot as plt
+from sklearn.model_selection import GridSearchCV
+from imblearn.over_sampling import SMOTE
+
 
 def printHead(name, data):
     print(f"****************** File : {name} ****************")
@@ -42,16 +46,17 @@ def cleanTrainData(train_data, dropColumns):
     defaultDropColumn = ['id', 'recorded_by']
     dC = defaultDropColumn + dropColumns
     d = train_data.drop(columns=dC)
-    return d.fillna(0)
 
+    # Transformation de date : extraction de l'année et calcul de l'âge de l'eau
+    if 'date_recorded' in d.columns and 'construction_year' in d.columns:
+        d['year_recorded'] = pd.to_datetime(d['date_recorded']).dt.year
+        d['water_age'] = d['year_recorded'] - d['construction_year']
+        d['water_age'] = d['water_age'].replace({0: np.nan}).fillna(0)
 
+    numeric_columns = d.select_dtypes(include=[np.number]).columns
+    d[numeric_columns] = d[numeric_columns].fillna(d[numeric_columns].median())
 
-def cleanTestData(test_data, dropColumns):
-    defaultDropColumn = ['id', 'recorded_by']
-    dC = defaultDropColumn + dropColumns
-    d = test_data.drop(columns=dC)
-    return d.fillna(0)
-
+    return d
 
 
 def detectMixColumnAndGetTarget(train_data):
@@ -59,7 +64,6 @@ def detectMixColumnAndGetTarget(train_data):
     for column in X.columns:
         unique_types = set(type(val) for val in X[column])
         if len(unique_types) > 1:
-            # print(f"La colonne '{column}' contient des types mixtes : {unique_types}")
             X[column] = X[column].astype(str)
     return X
 
@@ -68,13 +72,15 @@ def defineY(train_data):
     return train_data['status_group']
 
 
-
 def encodeVarCat(X, y):
     label_encoders = {}
 
     # Normaliser la colonne 'permit' pour qu'elle contienne uniquement des booléens
     if 'permit' in X.columns:
         X['permit'] = X['permit'].astype(bool)
+
+    if 'public_meeting' in X.columns:
+        X['public_meeting'] = X['public_meeting'].astype(bool)
 
     # Encoder les colonnes de X
     for column in X.select_dtypes(include=['object']).columns:
@@ -95,6 +101,15 @@ def encodeVarCat(X, y):
 
 def splitData(X, y):
     return train_test_split(X, y, test_size=0.2, random_state=42)
+
+
+param_grid = {
+    'n_estimators': [100, 200, 300],
+    'max_depth': [10, 20, 30, None],
+    'min_samples_split': [2, 5, 10],
+    'min_samples_leaf': [1, 2, 4],
+    'bootstrap': [True, False]
+}
 
 
 def trainWithForest(X_train, y_train):
@@ -122,6 +137,8 @@ def encodeTestData(data_test_cleaned, label_encoders):
     # Normaliser la colonne 'permit'
     if 'permit' in data_test_cleaned.columns:
         data_test_cleaned['permit'] = data_test_cleaned['permit'].astype(bool)
+    if 'public_meeting' in data_test_cleaned.columns:
+        data_test_cleaned['public_meeting'] = data_test_cleaned['public_meeting'].astype(bool)
 
     for column in data_test_cleaned.select_dtypes(include=['object']).columns:
         if column in label_encoders:
@@ -130,7 +147,7 @@ def encodeTestData(data_test_cleaned, label_encoders):
             # Remplacer les valeurs non vues par 'unknown'
             unseen_values = set(data_test_cleaned[column]) - set(label_encoders[column].classes_)
             if unseen_values:
-                print(f"Avertissement : valeurs non vues trouvées dans la colonne '{column}': {unseen_values}")
+                # Remplacer toutes les valeurs non vues par 'unknown'
                 data_test_cleaned[column] = data_test_cleaned[column].replace(unseen_values, 'unknown')
 
             # Transformer avec l'encodeur
@@ -138,8 +155,12 @@ def encodeTestData(data_test_cleaned, label_encoders):
         else:
             print(f"Attention : La colonne '{column}' n'a pas été trouvée dans le label_encoder.")
 
-    return data_test_cleaned
+    # Gérer la colonne 'scheme_management' qui pourrait contenir des valeurs numériques
+    if 'scheme_management' in data_test_cleaned.columns:
+        data_test_cleaned['scheme_management'] = data_test_cleaned['scheme_management'].astype(str)
+        data_test_cleaned['scheme_management'] = data_test_cleaned['scheme_management'].fillna('unknown')  # Remplacer les NaN par 'unknown'
 
+    return data_test_cleaned
 
 
 def predictWithTestData(model, data_test_cleaned):
@@ -156,20 +177,23 @@ def saveFile(data_test, test_predictions_labels):
     output.to_csv('SubmissionFormat.csv', index=False)
     print("Sauvegarde effectuée dans 'SubmissionFormat.csv'")
 
-
+# obsolete
 def train_and_evaluate(X, y, features):
     print(f"Évaluation des caractéristiques : {features}")  # Debug
     X_subset = X[list(features)]  # Utilisez la liste des caractéristiques
     X_train, X_val, y_train, y_val = train_test_split(X_subset, y, test_size=0.2, random_state=42)
 
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
+    grid_search = GridSearchCV(estimator=RandomForestClassifier(random_state=42), param_grid=param_grid, cv=3, n_jobs=-1, verbose=2)
+    grid_search.fit(X_train, y_train)
 
-    y_val_pred = model.predict(X_val)
+    # model = RandomForestClassifier(n_estimators=100, random_state=42)
+    # model.fit(X_train, y_train)
+
+    y_val_pred = grid_search.predict(X_val)
     precision = accuracy_score(y_val, y_val_pred)
     return precision
 
-
+# obsolete
 def find_best_features(X, y):
     best_score = 0
     best_features = None
@@ -196,38 +220,47 @@ def find_best_features(X, y):
     return best_features, best_score
 
 
+# Chargement des fichiers
 data_label, data_value, data_test = loadFiles()
 train_data = joinLabels(data_label, data_value)
 
-dropColumns = [ 'wpt_name',  'region_code', 'lga',  'recorded_by',
-    'extraction_type_group', 'extraction_type_class',  'payment_type',
-   'source_type','source_class',
-  'ward', 'subvillage',  'wpt_name',  'public_meeting', 'scheme_management', 'scheme_name', 'permit']
+# Spécifie les colonnes à supprimer
+dropColumns = [
+    # 'wpt_name', 'region_code', 'lga', 'recorded_by',
+    # 'extraction_type_group', 'extraction_type_class',
+    # 'payment_type', 'source_type', 'source_class',
+    # 'ward', 'subvillage', 'public_meeting',
+    # 'scheme_management', 'scheme_name', 'permit'
+]
 
+# Nettoyage des données d'entraînement et de test
 train_data = cleanTrainData(train_data, dropColumns)
-data_test_cleaned = cleanTestData(data_test, dropColumns)
+data_test_cleaned = cleanTrainData(data_test, dropColumns)
 
-
+# Détection des colonnes mixtes et définition de X et y
 X = detectMixColumnAndGetTarget(train_data)
 y = defineY(train_data)
 
+# X = pd.concat([X, train_data[['year_recorded']]], axis=1)
+
+# Encodage des variables catégorielles
 label_encoders, label_encoder_y, X, y = encodeVarCat(X, y)
 
+# Encodage des données de test
 data_test_cleaned = encodeTestData(data_test_cleaned, label_encoders)
 
+
+# Division des données
 X_train, X_val, y_train, y_val = splitData(X, y)
 
+# Entraînement du modèle
 model = trainWithForest(X_train, y_train)
 
+# Prédiction et calcul de la précision
 y_val_pred = predict(model, X_val)
-
 calculPrecision(y_val, y_val_pred)
 
-# best_features, best_score = find_best_features(X, y)
-# print(f"Meilleures caractéristiques : {best_features} avec un score de précision de : {best_score:.2f}")
-
+# Prédiction sur les données de test et sauvegarde des résultats
 test_predictions = predictWithTestData(model, data_test_cleaned)
-
 test_predictions_labels = replaceValuesWithOriginData(label_encoder_y, test_predictions)
-
 saveFile(data_test, test_predictions_labels)
