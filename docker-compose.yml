@@ -1,0 +1,22 @@
+version: '3.9'
+
+services:
+  train:
+    build: .
+    # runtime: nvidia
+    # deploy:
+    #  resources:
+    #    reservations:
+    #      devices:
+    #        - capabilities: [gpu]
+    volumes:
+      - .:/app/scripts
+    environment:
+      - DATAML_PATH=/app/scripts/
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - LD_LIBRARY_PATH=/usr/local/lib/tensorflow:$LD_LIBRARY_PATH
+    # command: /bin/bash -c "tail -f /dev/null"
+    command: python3 /app/scripts/main.py
+    # shm_size: '2gb'
+    ipc: host

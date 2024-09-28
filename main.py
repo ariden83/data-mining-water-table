@@ -1,14 +1,22 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelEncoder
 import itertools
 import matplotlib.pyplot as plt
 from sklearn.model_selection import GridSearchCV
 from imblearn.over_sampling import SMOTE
+from catboost import CatBoostClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from catboost import CatBoostClassifier
+import os
 
+dataml_path = os.getenv('DATAML_PATH', './')
+
+print(f"Le chemin du dossier dataml est : {dataml_path}")
 
 def printHead(name, data):
     print(f"****************** File : {name} ****************")
@@ -19,9 +27,9 @@ def printHead(name, data):
 
 
 def loadFiles():
-    file_path_label = "dataml/training-label.csv"
-    file_path_test = "dataml/test-set.csv"
-    file_path_value = "dataml/training-value.csv"
+    file_path_label = dataml_path + "dataml/training-label.csv"
+    file_path_test = dataml_path + "dataml/test-set.csv"
+    file_path_value = dataml_path + "dataml/training-value.csv"
 
     data_label = pd.read_csv(file_path_label)
     printHead("training-label", data_label)
@@ -112,10 +120,15 @@ param_grid = {
 }
 
 
-def trainWithForest(X_train, y_train):
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
-    return model
+def trainWithGridSearchCV():
+    random_forest_classifier = RandomForestClassifier(random_state=42)
+    grid_search = GridSearchCV(estimator=random_forest_classifier, param_grid=param_grid, cv=5, scoring='accuracy', verbose=3)
+    return grid_search
+
+
+def fitWithSmote(X_train, y_train):
+    smote = SMOTE(random_state=42)
+    return smote.fit_resample(X_train, y_train)
 
 
 def predict(model, X_val):
@@ -174,8 +187,9 @@ def replaceValuesWithOriginData(label_encoder_y, test_predictions):
 
 def saveFile(data_test, test_predictions_labels):
     output = pd.DataFrame({'id': data_test['id'], 'status_group': test_predictions_labels})
-    output.to_csv('SubmissionFormat.csv', index=False)
+    output.to_csv(dataml_path + 'export/SubmissionFormat.csv', index=False)
     print("Sauvegarde effectuée dans 'SubmissionFormat.csv'")
+
 
 # obsolete
 def train_and_evaluate(X, y, features):
@@ -220,10 +234,60 @@ def find_best_features(X, y):
     return best_features, best_score
 
 
-# Chargement des fichiers
-data_label, data_value, data_test = loadFiles()
-train_data = joinLabels(data_label, data_value)
+def caracteristicsImportance(model):
+    if hasattr(model, 'feature_importances_'):
+        importances = model.feature_importances_
+        indices = np.argsort(importances)[::-1]
 
+        # Tracer l'importance des caractéristiques
+        plt.figure(figsize=(10, 6))
+        plt.title("Importance des caractéristiques")
+        plt.bar(range(X_train.shape[1]), importances[indices], align="center")
+        plt.xticks(range(X_train.shape[1]), [X.columns[i] for i in indices], rotation=90)
+        plt.xlabel("Caractéristiques")
+        plt.ylabel("Importance")
+        plt.show()
+
+    else:
+        print("Le modèle n'a pas l'attribut 'feature_importances_'.")
+
+
+def get_model_and_fit(type, x, y):
+    # 0.8150
+    if type == "RandomForest":
+        m = RandomForestClassifier(n_estimators=1000, random_state=42)
+        m.fit(x, y)
+        return m
+    # 0.8089
+    if type == "RandomForestWithGridSearch":
+        m = trainWithGridSearchCV()
+        m.fit(x, y)
+        return m
+
+    elif type == "GradientBoosting":
+        m = GradientBoostingClassifier(n_estimators=100, random_state=42)
+        m.fit(x, y)
+        return m
+
+    elif type == "XGBoost":
+        m = XGBClassifier(n_estimators=100, random_state=42)
+        m.fit(x, y)
+        return m
+
+    elif type == "LightGBM":
+        m = LGBMClassifier(n_estimators=100, random_state=42)
+        m.fit(x, y)
+        return m
+    # 0.8058
+    elif type == "CatBoost":
+        m = CatBoostClassifier(iterations=10000, task_type="CPU", random_state=42, verbose=0)
+        m.fit(x, y.ravel())
+        return m
+    else:
+        raise ValueError(f"Modèle non supporté : {type}")
+
+
+model_type = "RandomForest"
 # Spécifie les colonnes à supprimer
 dropColumns = [
     # 'wpt_name', 'region_code', 'lga', 'recorded_by',
@@ -233,6 +297,11 @@ dropColumns = [
     # 'scheme_management', 'scheme_name', 'permit'
 ]
 
+# Chargement des fichiers
+data_label, data_value, data_test = loadFiles()
+train_data = joinLabels(data_label, data_value)
+
+
 # Nettoyage des données d'entraînement et de test
 train_data = cleanTrainData(train_data, dropColumns)
 data_test_cleaned = cleanTrainData(data_test, dropColumns)
@@ -241,24 +310,28 @@ data_test_cleaned = cleanTrainData(data_test, dropColumns)
 X = detectMixColumnAndGetTarget(train_data)
 y = defineY(train_data)
 
-# X = pd.concat([X, train_data[['year_recorded']]], axis=1)
-
 # Encodage des variables catégorielles
 label_encoders, label_encoder_y, X, y = encodeVarCat(X, y)
 
 # Encodage des données de test
 data_test_cleaned = encodeTestData(data_test_cleaned, label_encoders)
 
-
 # Division des données
 X_train, X_val, y_train, y_val = splitData(X, y)
 
-# Entraînement du modèle
-model = trainWithForest(X_train, y_train)
+# y_train = y_train.ravel()
+# y_val = y_val.ravel()
+
+# Smote decrease 0.005
+# X_train, y_train = fitWithSmote(X_train, y_train)
+
+model = get_model_and_fit(model_type, X_train, y_train)
 
 # Prédiction et calcul de la précision
 y_val_pred = predict(model, X_val)
 calculPrecision(y_val, y_val_pred)
+
+caracteristicsImportance(model)
 
 # Prédiction sur les données de test et sauvegarde des résultats
 test_predictions = predictWithTestData(model, data_test_cleaned)
