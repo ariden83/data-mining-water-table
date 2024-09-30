@@ -367,7 +367,7 @@ def get_model_and_fit(type, X_train, y_train, X_val, y_val):
     # 0.8150
     if type == "RandomForest":
         m = RandomForestClassifier(
-            n_estimators=300,
+            n_estimators=1000,
             random_state=42,
         )
 
@@ -416,9 +416,19 @@ def get_model_and_fit(type, X_train, y_train, X_val, y_val):
         m.fit(X_train, y_train)
         return m
 
-    # 0.7498
+    # 0.7978
+    # n_estimators: 250, Accuracy: 0.7708
+    # n_estimators: 300, Accuracy: 0.7739
+    # n_estimators: 350, Accuracy: 0.7786
+    # n_estimators: 400, Accuracy: 0.7815
+    # n_estimators: 450, Accuracy: 0.7837
+    # n_estimators: 500, Accuracy: 0.7848
+    # n_estimators: 550, Accuracy: 0.7871
+    # n_estimators: 600, Accuracy: 0.7898
+    # n_estimators: 650, Accuracy: 0.7900
+    # n_estimators: 1100, Accuracy: 0.7978
     elif type == "GradientBoosting":
-        n_estimators_range = range(250, 1000, 50)  # Tester n_estimators de 1 à 200
+        n_estimators_range = range(1000, 2000, 50)  # Tester n_estimators de 1 à 200
         return find_best_estimator_with_grandiant_boosting(X_train, y_train, X_val, y_val, n_estimators_range)
 
     # 0.8082
@@ -431,9 +441,9 @@ def get_model_and_fit(type, X_train, y_train, X_val, y_val):
 
         showGraphic(m)
         return m
-    # 0.7942
+    # 0.8115
     elif type == "LightGBM":
-        m = LGBMClassifier(n_estimators=100, random_state=42)
+        m = LGBMClassifier(n_estimators=800, random_state=42)
         m.fit(X_train, y_train)
         return m
     # 0.8058
