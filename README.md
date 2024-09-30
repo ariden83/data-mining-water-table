@@ -20,3 +20,6 @@ Using data from Taarifa and the Tanzanian Ministry of Water, can you predict whi
 
 to generate the SubmissionFormat.csv file in the export folder in order to test the model, you must execute the following command:
 > make train
+
+![importance des caractéristiques](./img/carecteristic.png)
+
